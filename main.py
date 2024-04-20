@@ -5,12 +5,13 @@ import os
 import aiohttp
 import requests
 from PIL import Image
-
 from data import db_session
 from telegram import Update, ReplyKeyboardRemove
-from telegram.ext import Application, MessageHandler, filters, CommandHandler, ConversationHandler, CallbackContext
+from telegram.ext import Application, MessageHandler, filters, CommandHandler, ConversationHandler, CallbackContext, \
+    Updater
 from config import BOT_TOKEN
 from telegram import ReplyKeyboardMarkup
+
 
 from data.models.template import Template
 from data.models.user import User
@@ -21,6 +22,30 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def support(update: Update, context: CallbackContext):
+    user_id = 'TARGET_USER_ID'  # Замените 'TARGET_USER_ID' на ID пользователя, которому нужно отправить сообщение
+    message_text = "Вы включили режим поддержки. Ожидайте ответа от администратора."
+    await context.bot.send_message(chat_id=user_id, text=message_text)
+
+
+# Функция для отправки сообщения администратору
+async def send_to_admin(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    text = update.message.text
+    context.user_data['support_message'] = text
+    await context.bot.send_message(chat_id='ADMIN_CHAT_ID', text=f"Пользователь {user_id} запрашивает поддержку:\n{text}")
+
+
+# Функция для пересылки ответа от администратора пользователю через бота
+async def handle_admin_response(update: Update, context: CallbackContext):
+    support_message = context.user_data.get('support_message')
+    if support_message:
+        user_id = update.message.reply_to_message.forward_from.id
+        await context.bot.send_message(chat_id=user_id, text=update.message.text)
+    else:
+        await update.message.reply_text("Ошибка отправки сообщения. Попробуйте отправить сообщение администратору заново.")
 
 
 async def start(update: Update, context: CallbackContext):
@@ -198,6 +223,9 @@ def main():
     )
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('help', help_command))
+    application.add_handler(CommandHandler('support', support))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, send_to_admin))
+    application.add_handler(MessageHandler(filters.REPLY & filters.USER('ADMIN_CHAT_ID'), handle_admin_response))
     application.add_handler(change_conversation)
     application.add_handler(create_template_conversation)
 

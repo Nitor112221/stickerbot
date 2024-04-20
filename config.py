@@ -1,1 +1,1 @@
-BOT_TOKEN = "69708806AAFrg2R0D67JqGJZmw"  # ваш токен бота
+BOT_TOKEN = "6970880601:AAFrg2Rc8oOrzaFM4yedFObk0D67JqGJZmw"  # ваш токен бота
