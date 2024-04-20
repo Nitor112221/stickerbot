@@ -24,6 +24,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+#----------------------------------------------------------#
 async def support(update: Update, context: CallbackContext):
     user_id = 'TARGET_USER_ID'  # Замените 'TARGET_USER_ID' на ID пользователя, которому нужно отправить сообщение
     message_text = "Вы включили режим поддержки. Ожидайте ответа от администратора."
@@ -46,6 +47,23 @@ async def handle_admin_response(update: Update, context: CallbackContext):
         await context.bot.send_message(chat_id=user_id, text=update.message.text)
     else:
         await update.message.reply_text("Ошибка отправки сообщения. Попробуйте отправить сообщение администратору заново.")
+#----------------------------------------------------------#
+
+
+async def is_user_subscribed(update, context, channel_id):
+    chat_member = context.bot.getChatMember(chat_id=channel_id, user_id=update.effective_user.id)
+    if chat_member.status == 'left':
+        return False
+    return True
+
+
+async def check_subscription_command(update, context):
+    chat_id = update.effective_chat.id
+    channel_id = 'your_channel_id'  # Замените 'your_channel_id' на идентификатор вашего канала
+    if is_user_subscribed(update, context, channel_id):
+        update.message.reply_text(f'Пользователь {update.effective_user.first_name} подписан на канал!')
+    else:
+        update.message.reply_text(f'Пользователь {update.effective_user.first_name} не подписан на канал!')
 
 
 async def start(update: Update, context: CallbackContext):
@@ -221,6 +239,9 @@ def main():
         states={'проверка': [MessageHandler(filters.TEXT & ~filters.COMMAND, check_template_name)]},
         fallbacks=[CommandHandler('back', back)]
     )
+
+    channel_id = 'your_channel_id'
+    application.add_handler(CommandHandler('subscribe', check_subscription_command))
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('help', help_command))
     application.add_handler(CommandHandler('support', support))
