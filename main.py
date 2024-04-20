@@ -2,6 +2,10 @@
 import logging
 import os
 
+import aiohttp
+import requests
+from PIL import Image
+
 from data import db_session
 from telegram import Update, ReplyKeyboardRemove
 from telegram.ext import Application, MessageHandler, filters, CommandHandler, ConversationHandler, CallbackContext
@@ -12,11 +16,11 @@ from data.models.template import Template
 from data.models.user import User
 
 # Запускаем логгирование
-# logging.basicConfig(
-#     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.DEBUG
-# )
-#
-# logger = logging.getLogger(__name__)
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.ERROR
+)
+
+logger = logging.getLogger(__name__)
 
 
 async def start(update: Update, context: CallbackContext):
@@ -146,9 +150,20 @@ async def check_template_name(update: Update, context):
     return ConversationHandler.END
 
 
+async def get_photo(update: Update, file_name):
+    file_id = update.message.photo[-1]['file_id']
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f'https://api.telegram.org/bot{BOT_TOKEN}/getFile?file_id={file_id}') as resp:
+            file_path = resp.json()['result']['file_path']
+    img = Image.open(requests.get(f'https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}', stream=True).raw)
+    img.save(f'photo/{file_name}.png')
+
+
 def main():
     if not os.path.exists('db'):
         os.makedirs('db')
+    if not os.path.exists('photo'):
+        os.makedirs('photo')
     db_session.global_init("db/bot.db")
     db_sess = db_session.create_session()
     if not db_sess.query(User).all():
