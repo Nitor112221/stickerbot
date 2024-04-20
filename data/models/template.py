@@ -8,6 +8,6 @@ class Template(SqlAlchemyBase):
 
     id = sqlalchemy.Column(sqlalchemy.Integer,
                            primary_key=True, autoincrement=True)
-    id_creator = sqlalchemy.Column(sqlalchemy.Integer, sqlalchemy.ForeignKey('users.id'), unique=True, nullable=False)
-    title = sqlalchemy.Column(sqlalchemy.String)
+    id_creator = sqlalchemy.Column(sqlalchemy.Integer, sqlalchemy.ForeignKey('users.id'), nullable=False)
+    title = sqlalchemy.Column(sqlalchemy.String, unique=True)
     is_public = sqlalchemy.Column(sqlalchemy.Boolean, default=False)
