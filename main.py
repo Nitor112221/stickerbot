@@ -21,7 +21,7 @@ from data.models.user import User
 
 async def start(update: Update, context: CallbackContext):
     await update.message.reply_text(f'Здравствуйте, я умею создавать стикерпаки по шаблонам, чтобы узнать подробнее о '
-                                    f'моих возможностях напишите команду /help')
+                                    f'моих возможностях напишите команду /help', reply_markup=ReplyKeyboardRemove())
     user_id = update.message.from_user.id
     db_sess = db_session.create_session()
     if not db_sess.query(User).filter(User.id_telegramm == user_id).first():
@@ -53,7 +53,10 @@ async def change(update, context):
     db_sess = db_session.create_session()
     user = db_sess.query(User).filter(User.id_telegramm == update.message.from_user.id).first()
     if not db_sess.query(Template).filter(Template.id_creator == user.id).all():
-        await update.message.reply_text(f'Выбирите шаблон из списка')
+        templates = db_sess.query(Template).filter(Template.is_public == True).all()
+        reply_keybord = [list(map(lambda x: x.title, templates[i:i + 3])) for i in range(0, len(templates), 3)]
+        markup2 = ReplyKeyboardMarkup(reply_keybord, one_time_keyboard=True)
+        await update.message.reply_text(f'Выбирите шаблон из списка', reply_markup=markup2)
         return 'общий'
     reply_keyboard = [['общий', 'приватный']]
     markup1 = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=False)
@@ -84,8 +87,8 @@ async def check_type_templates(update: Update, context):
         return 'выбор'
 
 
-async def stop_change(update, context):
-    await update.message.reply_text(f'Хорошо, шаблон остался тот же самый', reply_markup=ReplyKeyboardRemove())
+async def back(update, context):
+    await update.message.reply_text(f'Действие отменено', reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
 
@@ -122,6 +125,27 @@ async def privat(update: Update, context):
     return ConversationHandler.END
 
 
+async def create_template(update: Update, context):
+    await update.message.reply_text(f'Введите название для шаблона')
+    return 'проверка'
+
+
+async def check_template_name(update: Update, context):
+    text = update.message.text
+    db_sess = db_session.create_session()
+    user = db_sess.query(User).filter(User.id_telegramm == update.message.from_user.id).first()
+    if db_sess.query(Template).filter(Template.title == text).first():
+        await update.message.reply_text(f'Такое название для шаблонов уже занято, придумайте другое название')
+        return 'проверка'
+    template = Template()
+    template.title = text
+    template.id_creator = user.id
+    db_sess.add(template)
+    db_sess.commit()
+    await update.message.reply_text(f'Шаблон создан, не забудьте добавить в него фотографии')
+    return ConversationHandler.END
+
+
 def main():
     if not os.path.exists('db'):
         os.makedirs('db')
@@ -142,19 +166,25 @@ def main():
 
     application = Application.builder().token(BOT_TOKEN).build()
 
-    conv_handler = ConversationHandler(
+    change_conversation = ConversationHandler(
         entry_points=[CommandHandler('change', change)],
         states={
             'выбор': [MessageHandler(filters.TEXT & ~filters.COMMAND, check_type_templates)],
             'общий': [MessageHandler(filters.TEXT & ~filters.COMMAND, general)],
             'приватный': [MessageHandler(filters.TEXT & ~filters.COMMAND, privat)]
         },
-        fallbacks=[CommandHandler('stop_change', stop_change)]
+        fallbacks=[CommandHandler('back', back)]
     )
 
+    create_template_conversation = ConversationHandler(
+        entry_points=[CommandHandler('create_template', create_template)],
+        states={'проверка': [MessageHandler(filters.TEXT & ~filters.COMMAND, check_template_name)]},
+        fallbacks=[CommandHandler('back', back)]
+    )
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('help', help_command))
-    application.add_handler(conv_handler)
+    application.add_handler(change_conversation)
+    application.add_handler(create_template_conversation)
 
     application.run_polling()
 
