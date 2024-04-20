@@ -14,13 +14,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def echo(update, context):
-    await update.message.reply_text(f'{update.message.text}')
+async def start(update, context):
+    await update.message.reply_text(f'Здравствуйте, я умею создавать стикерпаки по шаблонам, чтобы узнать подробнее о '
+                                    f'моих возможностях напишите команду /help')
 
 
 def main():
     application = Application.builder().token(BOT_TOKEN).build()
-    text_handler = MessageHandler(filters.TEXT, echo)
+    text_handler = CommandHandler('start', start)
 
     application.add_handler(text_handler)
 
