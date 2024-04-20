@@ -1,3 +1,0 @@
-# stickerbot
-
-Не читай dontreadme
