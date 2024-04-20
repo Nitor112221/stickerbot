@@ -1,1 +1,2 @@
-BOT_TOKEN = "69708806AAFrg2R0D67JqGJZmw"  # ваш токен бота
+BOT_TOKEN = "7172886187:AAEj50aT9HrZEWQn0fn3DipW3ADAstIV0XQ"  # ваш токен бота
+IMG_FOLDER = 'bot/img'

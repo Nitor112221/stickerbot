@@ -1,4 +1,5 @@
 # Импортируем необходимые классы.
+import io
 import logging
 import os
 
@@ -9,15 +10,16 @@ from PIL import Image
 from data import db_session
 from telegram import Update, ReplyKeyboardRemove
 from telegram.ext import Application, MessageHandler, filters, CommandHandler, ConversationHandler, CallbackContext
-from config import BOT_TOKEN
+from config import BOT_TOKEN, IMG_FOLDER
 from telegram import ReplyKeyboardMarkup
 
 from data.models.template import Template
 from data.models.user import User
+from data.models.photo import Photo
 
 # Запускаем логгирование
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.ERROR
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
 
 logger = logging.getLogger(__name__)
@@ -113,7 +115,7 @@ async def general(update: Update, context):
     return ConversationHandler.END
 
 
-async def privat(update: Update, context):
+async def private(update: Update, context):
     text = update.message.text
     db_sess = db_session.create_session()
     user = db_sess.query(User).filter(User.id_telegramm == update.message.from_user.id).first()
@@ -144,27 +146,65 @@ async def check_template_name(update: Update, context):
     template = Template()
     template.title = text
     template.id_creator = user.id
+    user.selected_template = template.id
     db_sess.add(template)
     db_sess.commit()
     await update.message.reply_text(f'Шаблон создан, не забудьте добавить в него фотографии')
     return ConversationHandler.END
 
 
-async def get_photo(update: Update, file_name):
-    file_id = update.message.photo[-1]['file_id']
+# async def add_photo(update, context):
+#     db_sess = db_session.create_session()
+#     user = db_sess.query(User).filter(User.id_telegramm == update.message.from_user.id).first()
+#
+#     if user.selected_template in
+
+
+async def save_image(update, context):
+    '''Save all img to the database and folder'''
+    user = update.message.from_user.id
+    db_sess = db_session.create_session()
+    template_id = db_sess.query(User).filter(User.id_telegramm == user).first().selected_template
+
+    # Create images record in database
+    # if we don't know last id we won't create title for new file, but we don't know it before commit, so we have to
+    # check current id with other ways like this
+    curr_id = db_sess.query(Photo).all()[-1].id + 1
+    img = Photo()
+    img.name_photo = f'{curr_id}.png'
+    img.id_template = template_id
+    db_sess.add(img)
+    db_sess.commit()
+
+    await get_photo(update, img.name_photo)
+
+
+async def get_photo(update, file_name):
+    file_id = update.message.photo[-1].file_id
     async with aiohttp.ClientSession() as session:
+        # Retrieve the file_path from Telegram's getFile API
         async with session.get(f'https://api.telegram.org/bot{BOT_TOKEN}/getFile?file_id={file_id}') as resp:
-            file_path = resp.json()['result']['file_path']
-    img = Image.open(requests.get(f'https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}', stream=True).raw)
-    img.save(f'photo/{file_name}.png')
+            data = await resp.json()
+            file_path = data['result']['file_path']
+
+        # Retrieve the actual file using the file_path provided by Telegram
+        async with session.get(f'https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}') as resp:
+            if resp.status == 200:
+                file_data = await resp.read()
+
+                # Use BytesIO to convert bytes data to a file-like object
+                img = Image.open(io.BytesIO(file_data))
+                img.save(f'photo/{file_name}.png')
+            else:
+                print(f"Error retrieving file: {resp.status}")
 
 
 def main():
-    if not os.path.exists('db'):
-        os.makedirs('db')
+    if not os.path.exists('bot/db'):
+        os.makedirs('bot/db')
     if not os.path.exists('photo'):
         os.makedirs('photo')
-    db_session.global_init("db/bot.db")
+    db_session.global_init("bot/db/bot.db")
     db_sess = db_session.create_session()
     if not db_sess.query(User).all():
         user = User()
@@ -186,7 +226,7 @@ def main():
         states={
             'выбор': [MessageHandler(filters.TEXT & ~filters.COMMAND, check_type_templates)],
             'общий': [MessageHandler(filters.TEXT & ~filters.COMMAND, general)],
-            'приватный': [MessageHandler(filters.TEXT & ~filters.COMMAND, privat)]
+            'приватный': [MessageHandler(filters.TEXT & ~filters.COMMAND, private)]
         },
         fallbacks=[CommandHandler('back', back)]
     )
@@ -198,6 +238,8 @@ def main():
     )
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('help', help_command))
+    application.add_handler(MessageHandler(filters.PHOTO, get_photo))
+    # application.add_handler(CommandHandler('add_photo', add_photo))
     application.add_handler(change_conversation)
     application.add_handler(create_template_conversation)
 
