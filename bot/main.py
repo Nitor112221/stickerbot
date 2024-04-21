@@ -2,10 +2,12 @@
 import io
 import logging
 import os
+import uuid
 
 import aiohttp
 import requests
 from PIL import Image
+from sqlalchemy import select
 
 from data import db_session
 from telegram import Update, ReplyKeyboardRemove
@@ -16,6 +18,8 @@ from telegram import ReplyKeyboardMarkup
 from data.models.photo import Photo
 from data.models.template import Template
 from data.models.user import User
+
+from FaceSwap import FaceSwapper
 
 # Запускаем логгирование
 logging.basicConfig(
@@ -153,7 +157,7 @@ async def check_template_name(update: Update, context):
 
 
 async def save_image(update, context):
-    '''Save all img to the database and folder'''
+    '''Save all user_img to the database and folder'''
     user = update.message.from_user.id
     db_sess = db_session.create_session()
     user = db_sess.query(User).filter(User.id_telegramm == user).first()
@@ -174,7 +178,7 @@ async def save_image(update, context):
         await update.message.reply_text(f'В данный момент создание стикерпаков отключено')
 
 
-async def get_photo(update, file_name):
+async def get_photo(update, file_name, path=None):
     file_id = update.message.photo[-1].file_id
     async with aiohttp.ClientSession() as session:
         # Retrieve the file_path from Telegram's getFile API
@@ -189,7 +193,8 @@ async def get_photo(update, file_name):
 
                 # Use BytesIO to convert bytes data to a file-like object
                 img = Image.open(io.BytesIO(file_data))
-                img.save(f'photo/{file_name}.png')
+                if not path:
+                    img.save(f'photo/{file_name}.png')
             else:
                 print(f"Error retrieving file: {resp.status}")
 
@@ -211,6 +216,87 @@ async def stop_add_photo(updade: Update, context: CallbackContext):
     db_sess.commit()
     await updade.message.reply_text(f'Вы выключили режим добавления фото в шаблон, теперь все далее отправленные фото '
                                     f'будут преобразованы в стикерпаки')
+
+
+async def download_photo(file_id, path):
+    # Функция для скачивания фотографии по file_id
+    async with aiohttp.ClientSession() as session:
+        # Получаем путь к файлу фотографии
+        async with session.get(f'https://api.telegram.org/bot{BOT_TOKEN}/getFile?file_id={file_id}') as response:
+            response_data = await response.json()
+            file_path = response_data['result']['file_path']
+
+        # Скачиваем фотографию
+        photo_url = f'https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}'
+        async with session.get(photo_url) as photo_response:
+            if photo_response.status == 200:
+                # Сохраняем фотографию локально
+                photo_data = await photo_response.read()
+                with open(path, 'wb') as photo_file:
+                    photo_file.write(photo_data)
+                return path
+            else:
+                raise Exception('Не удалось скачать фотографию.')
+
+
+async def create_stickers_set(update, context):
+    bot = context.bot
+    user = update.message.from_user
+    db_sess = db_session.create_session()
+    user = db_sess.query(User).filter(User.id_telegramm == update.message.from_user.id).first()
+    photos_paths = db_sess.query(Photo.name_photo).join(Template, Template.id == Photo.id_template).filter(
+        Template.id == user.selected_template).all()
+
+    sticker_pack_name = f"{user.username}_by_{bot.username}_pack"
+    sticker_pack_title = f"{user.username}'s Sticker Pack"
+
+    file_id = update.message.photo[-1].file_id
+    user_photo_path = f'bot/user_img/{user.username}_{file_id}.png'
+
+    user_photo_path = await download_photo(file_id, user_photo_path)
+
+    if not os.path.exists(user_photo_path):
+        await update.message.reply_text('Не удалось скачать вашу фотографию.')
+        return
+    first_photo_path = photos_paths[0] if photos_paths else None
+
+    if not first_photo_path:
+        await update.message.reply_text('Нет фотографий для создания стикерпака.')
+        return
+
+    try:
+        face_swap = FaceSwapper(user_photo_path, first_photo_path).get_image()
+        await bot.create_new_sticker_set(
+            user_id=user.id,
+            name=sticker_pack_name,
+            title=sticker_pack_title,
+            png_sticker=open(face_swap, 'rb'),
+            emojis='😀'
+        )
+        await update.message.reply_text('Стикерпак успешно создан!')
+
+        # Добавляем оставшиеся стикеры в стикерпак
+        for photo_path in photos_paths[1:]:
+            face_swap = FaceSwapper(user_photo_path, photo_path).get_image()
+            sticker = await bot.add_sticker_to_set(
+                user_id=user.id,
+                name=sticker_pack_name,
+                png_sticker=open(face_swap, 'rb'),
+                emojis='😀'
+            )
+            # Закрываем файл стикера после использования
+            sticker.png_sticker.close()
+
+        # Отправляем сообщение о том, что все стикеры добавлены
+        await update.message.reply_text('Все стикеры добавлены в стикерпак!')
+
+        # Отправляем один из стикеров из стикерпака пользователю
+        # Здесь мы используем последний добавленный стикер
+        await bot.send_sticker(chat_id=update.message.chat_id, sticker=sticker.file_id)
+        os.remove(user_photo_path)
+    except Exception as e:
+        logger.error(e)
+        await update.message.reply_text('Произошла ошибка при создании стикерпака.')
 
 
 def main():
