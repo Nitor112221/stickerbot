@@ -2,28 +2,24 @@
 import io
 import logging
 import os
-import uuid
 
 import aiohttp
 import requests
 from PIL import Image
-from sqlalchemy import select
 
 from data import db_session
 from telegram import Update, ReplyKeyboardRemove
 from telegram.ext import Application, MessageHandler, filters, CommandHandler, ConversationHandler, CallbackContext
-from config import BOT_TOKEN
+from config import BOT_TOKEN, ADMIN_ID
 from telegram import ReplyKeyboardMarkup
 
 from data.models.photo import Photo
 from data.models.template import Template
 from data.models.user import User
 
-from FaceSwap import FaceSwapper
-
 # Запускаем логгирование
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.ERROR
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
 
 logger = logging.getLogger(__name__)
@@ -157,7 +153,7 @@ async def check_template_name(update: Update, context):
 
 
 async def save_image(update, context):
-    '''Save all user_img to the database and folder'''
+    '''Save all img to the database and folder'''
     user = update.message.from_user.id
     db_sess = db_session.create_session()
     user = db_sess.query(User).filter(User.id_telegramm == user).first()
@@ -175,10 +171,10 @@ async def save_image(update, context):
         else:
             await update.message.reply_text(f'у вас нет доступа редактировать данный шаблон')
     else:
-        await create_stickers_set(update, context)
+        await update.message.reply_text(f'В данный момент создание стикерпаков отключено')
 
 
-async def get_photo(update, file_name, path=None):
+async def get_photo(update, file_name):
     file_id = update.message.photo[-1].file_id
     async with aiohttp.ClientSession() as session:
         # Retrieve the file_path from Telegram's getFile API
@@ -193,8 +189,7 @@ async def get_photo(update, file_name, path=None):
 
                 # Use BytesIO to convert bytes data to a file-like object
                 img = Image.open(io.BytesIO(file_data))
-                if not path:
-                    img.save(f'photo/{file_name}.png')
+                img.save(f'photo/{file_name}.png')
             else:
                 print(f"Error retrieving file: {resp.status}")
 
@@ -218,86 +213,35 @@ async def stop_add_photo(updade: Update, context: CallbackContext):
                                     f'будут преобразованы в стикерпаки')
 
 
-async def download_photo(file_id, path):
-    # Функция для скачивания фотографии по file_id
-    async with aiohttp.ClientSession() as session:
-        # Получаем путь к файлу фотографии
-        async with session.get(f'https://api.telegram.org/bot{BOT_TOKEN}/getFile?file_id={file_id}') as response:
-            response_data = await response.json()
-            file_path = response_data['result']['file_path']
-
-        # Скачиваем фотографию
-        photo_url = f'https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}'
-        async with session.get(photo_url) as photo_response:
-            if photo_response.status == 200:
-                # Сохраняем фотографию локально
-                photo_data = await photo_response.read()
-                with open(path, 'wb') as photo_file:
-                    photo_file.write(photo_data)
-                return path
-            else:
-                raise Exception('Не удалось скачать фотографию.')
+async def support(update: Update, context: CallbackContext):
+    # Отключаем режим поддержки для бота
+    await context.bot.send_message(chat_id=update.effective_chat.id,
+                                   text="Режим поддержки включен. Следующее ваше сообщение отправиться администратору")
+    return 1
 
 
-async def create_stickers_set(update, context):
-    bot = context.bot
-    user = update.message.from_user
-    db_sess = db_session.create_session()
-    user = db_sess.query(User).filter(User.id_telegramm == update.message.from_user.id).first()
-    photos_paths = db_sess.query(Photo.id).join(Template, Template.id == Photo.id_template).filter(
-        Template.id == user.selected_template).all()
+# Обработчик текстовых сообщений
+async def handle_text(update: Update, context: CallbackContext):
+    if update.effective_chat.id == ADMIN_ID:
+        message = update.message.reply_to_message
 
-    user = update.message.from_user
-    sticker_pack_name = f"{user.username}_by_{bot.username}_pack"
-    sticker_pack_title = f"{user.username}'s Sticker Pack"
+        if message:
+            text = message.text
+            await context.bot.send_message(chat_id=int(text.split()[0]),
+                                           text=f"Ответ от админа: {update.effective_user.first_name}:\n{update.effective_message.text}")
+    else:
+        # Если нет, просто отправляем сообщение админу
+        if update.effective_user.id != ADMIN_ID:
+            await context.bot.send_message(chat_id=ADMIN_ID,
+                                           text=f"{update.effective_user.id} Новое сообщение от {update.effective_user.first_name}:\n{update.effective_message.text}")
+    return 1
 
-    file_id = update.message.photo[-1].file_id
-    user_photo_path = f'bot/user_img/{user.username}_{file_id}.png'
 
-    user_photo_path = await download_photo(file_id, user_photo_path)
-
-    if not os.path.exists(user_photo_path):
-        await update.message.reply_text('Не удалось скачать вашу фотографию.')
-        return
-    first_photo_path = 'photo/' + str(photos_paths[0][0]) + '.png' if photos_paths else None
-
-    if not first_photo_path:
-        await update.message.reply_text('Нет фотографий для создания стикерпака.')
-        return
-
-    try:
-        face_swap = FaceSwapper(user_photo_path, first_photo_path).get_image()
-        await bot.create_new_sticker_set(
-            user_id=user.id,
-            name=sticker_pack_name,
-            title=sticker_pack_title,
-            png_sticker=open(face_swap, 'rb'),
-            emojis='😀'
-        )
-        await update.message.reply_text('Стикерпак успешно создан!')
-
-        # Добавляем оставшиеся стикеры в стикерпак
-        for photo_path in photos_paths[1:]:
-            face_swap = FaceSwapper(user_photo_path, 'photo/' + photo_path[0] + '.png').get_image()
-            sticker = await bot.add_sticker_to_set(
-                user_id=user.id,
-                name=sticker_pack_name,
-                png_sticker=open(face_swap, 'rb'),
-                emojis='😀'
-            )
-            # Закрываем файл стикера после использования
-            sticker.png_sticker.close()
-
-        # Отправляем сообщение о том, что все стикеры добавлены
-        await update.message.reply_text('Все стикеры добавлены в стикерпак!')
-
-        # Отправляем один из стикеров из стикерпака пользователю
-        # Здесь мы используем последний добавленный стикер
-        await bot.send_sticker(chat_id=update.message.chat_id, sticker=sticker.file_id)
-        os.remove(user_photo_path)
-    except Exception as e:
-        logger.error(e)
-        await update.message.reply_text('Произошла ошибка при создании стикерпака.')
+async def support(update: Update, context: CallbackContext):
+    # Отключаем режим поддержки для бота
+    await context.bot.send_message(chat_id=update.effective_chat.id,
+                                   text="Режим поддержки включен. Следующее ваше сообщение отправиться администратору")
+    return 1
 
 
 def main():
@@ -337,12 +281,20 @@ def main():
         states={'проверка': [MessageHandler(filters.TEXT & ~filters.COMMAND, check_template_name)]},
         fallbacks=[CommandHandler('back', back)]
     )
+    support_conversation = ConversationHandler(
+        entry_points=[CommandHandler('support', support)],
+        states={
+            1: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text)]
+        },
+        fallbacks=[CommandHandler('back', back)]
+    )
+    application.add_handler(change_conversation)
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('help', help_command))
     application.add_handler(MessageHandler(filters.PHOTO, save_image))
     application.add_handler(CommandHandler('add_photo', add_photo))
     application.add_handler(CommandHandler('stop_add_photo', stop_add_photo))
-    application.add_handler(change_conversation)
+    application.add_handler(support_conversation)
     application.add_handler(create_template_conversation)
 
     application.run_polling()
