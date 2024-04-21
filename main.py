@@ -157,18 +157,21 @@ async def save_image(update, context):
     user = update.message.from_user.id
     db_sess = db_session.create_session()
     user = db_sess.query(User).filter(User.id_telegramm == user).first()
-    if db_sess.query(Template).filter(Template.id == user.selected_template).first().id_creator == user.id:
-        # Create images record in database
-        # if we don't know last id we won't create title for new file, but we don't know it before commit, so we have to
-        # check current id with other ways like this
-        img = Photo()
-        img.id_template = user.selected_template
-        db_sess.add(img)
-        db_sess.commit()
-        await get_photo(update, img.id)
-        await update.message.reply_text(f'Ваше фото успешно загружено')
+    if user.is_add_photo:
+        if db_sess.query(Template).filter(Template.id == user.selected_template).first().id_creator == user.id:
+            # Create images record in database
+            # if we don't know last id we won't create title for new file, but we don't know it before commit, so we have to
+            # check current id with other ways like this
+            img = Photo()
+            img.id_template = user.selected_template
+            db_sess.add(img)
+            db_sess.commit()
+            await get_photo(update, img.id)
+            await update.message.reply_text(f'Ваше фото успешно загружено')
+        else:
+            await update.message.reply_text(f'у вас нет доступа редактировать данный шаблон')
     else:
-        await update.message.reply_text(f'у вас нет доступа редактировать данный шаблон')
+        await update.message.reply_text(f'В данный момент создание стикерпаков отключено')
 
 
 async def get_photo(update, file_name):
@@ -189,6 +192,25 @@ async def get_photo(update, file_name):
                 img.save(f'photo/{file_name}.png')
             else:
                 print(f"Error retrieving file: {resp.status}")
+
+
+async def add_photo(updade: Update, context: CallbackContext):
+    db_sess = db_session.create_session()
+    user = db_sess.query(User).filter(User.id_telegramm == updade.message.from_user.id).first()
+    user.is_add_photo = True
+    db_sess.commit()
+    template = db_sess.query(Template).filter(Template.id == user.selected_template).first().title
+    await updade.message.reply_text(f'Теперь каждое отправленное вами фото будет попадать в шаблон {template}\n'
+                                    f'Чтобы выйти из режима добавления фото в шаблон напишите команду /stop_add_photo')
+
+
+async def stop_add_photo(updade: Update, context: CallbackContext):
+    db_sess = db_session.create_session()
+    user = db_sess.query(User).filter(User.id_telegramm == updade.message.from_user.id).first()
+    user.is_add_photo = False
+    db_sess.commit()
+    await updade.message.reply_text(f'Вы выключили режим добавления фото в шаблон, теперь все далее отправленные фото '
+                                    f'будут преобразованы в стикерпаки')
 
 
 def main():
@@ -231,7 +253,8 @@ def main():
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('help', help_command))
     application.add_handler(MessageHandler(filters.PHOTO, save_image))
-    # application.add_handler(CommandHandler('add_photo', add_photo))
+    application.add_handler(CommandHandler('add_photo', add_photo))
+    application.add_handler(CommandHandler('stop_add_photo', stop_add_photo))
     application.add_handler(change_conversation)
     application.add_handler(create_template_conversation)
 
