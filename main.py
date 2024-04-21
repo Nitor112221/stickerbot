@@ -10,7 +10,7 @@ from PIL import Image
 from data import db_session
 from telegram import Update, ReplyKeyboardRemove
 from telegram.ext import Application, MessageHandler, filters, CommandHandler, ConversationHandler, CallbackContext
-from config import BOT_TOKEN
+from config import BOT_TOKEN, ADMIN_ID
 from telegram import ReplyKeyboardMarkup
 
 from data.models.photo import Photo
@@ -19,7 +19,7 @@ from data.models.user import User
 
 # Запускаем логгирование
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.ERROR
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
 
 logger = logging.getLogger(__name__)
@@ -213,6 +213,37 @@ async def stop_add_photo(updade: Update, context: CallbackContext):
                                     f'будут преобразованы в стикерпаки')
 
 
+async def support(update: Update, context: CallbackContext):
+    # Отключаем режим поддержки для бота
+    await context.bot.send_message(chat_id=update.effective_chat.id,
+                                   text="Режим поддержки включен. Следующее ваше сообщение отправиться администратору")
+    return 1
+
+
+# Обработчик текстовых сообщений
+async def handle_text(update: Update, context: CallbackContext):
+    if update.effective_chat.id == ADMIN_ID:
+        message = update.message.reply_to_message
+
+        if message:
+            text = message.text
+            await context.bot.send_message(chat_id=int(text.split()[0]),
+                                           text=f"Ответ от админа: {update.effective_user.first_name}:\n{update.effective_message.text}")
+    else:
+        # Если нет, просто отправляем сообщение админу
+        if update.effective_user.id != ADMIN_ID:
+            await context.bot.send_message(chat_id=ADMIN_ID,
+                                           text=f"{update.effective_user.id} Новое сообщение от {update.effective_user.first_name}:\n{update.effective_message.text}")
+    return 1
+
+
+async def support(update: Update, context: CallbackContext):
+    # Отключаем режим поддержки для бота
+    await context.bot.send_message(chat_id=update.effective_chat.id,
+                                   text="Режим поддержки включен. Следующее ваше сообщение отправиться администратору")
+    return 1
+
+
 def main():
     if not os.path.exists('db'):
         os.makedirs('db')
@@ -250,12 +281,20 @@ def main():
         states={'проверка': [MessageHandler(filters.TEXT & ~filters.COMMAND, check_template_name)]},
         fallbacks=[CommandHandler('back', back)]
     )
+    support_conversation = ConversationHandler(
+        entry_points=[CommandHandler('support', support)],
+        states={
+            1: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text)]
+        },
+        fallbacks=[CommandHandler('back', back)]
+    )
+    application.add_handler(change_conversation)
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('help', help_command))
     application.add_handler(MessageHandler(filters.PHOTO, save_image))
     application.add_handler(CommandHandler('add_photo', add_photo))
     application.add_handler(CommandHandler('stop_add_photo', stop_add_photo))
-    application.add_handler(change_conversation)
+    application.add_handler(support_conversation)
     application.add_handler(create_template_conversation)
 
     application.run_polling()
