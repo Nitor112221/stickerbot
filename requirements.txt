@@ -1,0 +1,5 @@
+python-telegram-bot[ext]
+SQLAlchemy
+dlib
+aiohttp
+pillow
