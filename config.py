@@ -1,1 +1,3 @@
-BOT_TOKEN = "69708806AAFrg2R0D67JqGJZmw"  # ваш токен бота
+BOT_TOKEN = "введите ваш токен"  # ваш токен бота
+IMG_FOLDER = 'bot/img'
+ADMIN_ID = 5685707883  # id админа
