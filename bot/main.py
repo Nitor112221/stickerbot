@@ -175,7 +175,7 @@ async def save_image(update, context):
         else:
             await update.message.reply_text(f'у вас нет доступа редактировать данный шаблон')
     else:
-        await update.message.reply_text(f'В данный момент создание стикерпаков отключено')
+        await create_stickers_set(update, context)
 
 
 async def get_photo(update, file_name, path=None):
@@ -244,9 +244,10 @@ async def create_stickers_set(update, context):
     user = update.message.from_user
     db_sess = db_session.create_session()
     user = db_sess.query(User).filter(User.id_telegramm == update.message.from_user.id).first()
-    photos_paths = db_sess.query(Photo.name_photo).join(Template, Template.id == Photo.id_template).filter(
+    photos_paths = db_sess.query(Photo.id).join(Template, Template.id == Photo.id_template).filter(
         Template.id == user.selected_template).all()
 
+    user = update.message.from_user
     sticker_pack_name = f"{user.username}_by_{bot.username}_pack"
     sticker_pack_title = f"{user.username}'s Sticker Pack"
 
@@ -258,7 +259,7 @@ async def create_stickers_set(update, context):
     if not os.path.exists(user_photo_path):
         await update.message.reply_text('Не удалось скачать вашу фотографию.')
         return
-    first_photo_path = photos_paths[0] if photos_paths else None
+    first_photo_path = 'photo' + photos_paths[0] + '.png' if photos_paths else None
 
     if not first_photo_path:
         await update.message.reply_text('Нет фотографий для создания стикерпака.')
@@ -277,7 +278,7 @@ async def create_stickers_set(update, context):
 
         # Добавляем оставшиеся стикеры в стикерпак
         for photo_path in photos_paths[1:]:
-            face_swap = FaceSwapper(user_photo_path, photo_path).get_image()
+            face_swap = FaceSwapper(user_photo_path, 'photo' + photo_path + '.png').get_image()
             sticker = await bot.add_sticker_to_set(
                 user_id=user.id,
                 name=sticker_pack_name,
