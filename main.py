@@ -1,4 +1,5 @@
 # Импортируем необходимые классы.
+import io
 import logging
 import os
 
@@ -12,6 +13,7 @@ from telegram.ext import Application, MessageHandler, filters, CommandHandler, C
 from config import BOT_TOKEN
 from telegram import ReplyKeyboardMarkup
 
+from data.models.photo import Photo
 from data.models.template import Template
 from data.models.user import User
 
@@ -150,13 +152,43 @@ async def check_template_name(update: Update, context):
     return ConversationHandler.END
 
 
-async def get_photo(update: Update, file_name):
-    file_id = update.message.photo[-1]['file_id']
+async def save_image(update, context):
+    '''Save all img to the database and folder'''
+    user = update.message.from_user.id
+    db_sess = db_session.create_session()
+    user = db_sess.query(User).filter(User.id_telegramm == user).first()
+    if db_sess.query(Template).filter(Template.id == user.selected_template).first().id_creator == user.id:
+        # Create images record in database
+        # if we don't know last id we won't create title for new file, but we don't know it before commit, so we have to
+        # check current id with other ways like this
+        img = Photo()
+        img.id_template = user.selected_template
+        db_sess.add(img)
+        db_sess.commit()
+        await get_photo(update, img.id)
+        await update.message.reply_text(f'Ваше фото успешно загружено')
+    else:
+        await update.message.reply_text(f'у вас нет доступа редактировать данный шаблон')
+
+
+async def get_photo(update, file_name):
+    file_id = update.message.photo[-1].file_id
     async with aiohttp.ClientSession() as session:
+        # Retrieve the file_path from Telegram's getFile API
         async with session.get(f'https://api.telegram.org/bot{BOT_TOKEN}/getFile?file_id={file_id}') as resp:
-            file_path = resp.json()['result']['file_path']
-    img = Image.open(requests.get(f'https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}', stream=True).raw)
-    img.save(f'photo/{file_name}.png')
+            data = await resp.json()
+            file_path = data['result']['file_path']
+
+        # Retrieve the actual file using the file_path provided by Telegram
+        async with session.get(f'https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}') as resp:
+            if resp.status == 200:
+                file_data = await resp.read()
+
+                # Use BytesIO to convert bytes data to a file-like object
+                img = Image.open(io.BytesIO(file_data))
+                img.save(f'photo/{file_name}.png')
+            else:
+                print(f"Error retrieving file: {resp.status}")
 
 
 def main():
@@ -198,6 +230,8 @@ def main():
     )
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('help', help_command))
+    application.add_handler(MessageHandler(filters.PHOTO, save_image))
+    # application.add_handler(CommandHandler('add_photo', add_photo))
     application.add_handler(change_conversation)
     application.add_handler(create_template_conversation)
 
