@@ -259,7 +259,7 @@ async def create_stickers_set(update, context):
     if not os.path.exists(user_photo_path):
         await update.message.reply_text('Не удалось скачать вашу фотографию.')
         return
-    first_photo_path = 'photo' + str(photos_paths[0][0]) + '.png' if photos_paths else None
+    first_photo_path = 'photo/' + str(photos_paths[0][0]) + '.png' if photos_paths else None
 
     if not first_photo_path:
         await update.message.reply_text('Нет фотографий для создания стикерпака.')
@@ -278,7 +278,7 @@ async def create_stickers_set(update, context):
 
         # Добавляем оставшиеся стикеры в стикерпак
         for photo_path in photos_paths[1:]:
-            face_swap = FaceSwapper(user_photo_path, 'photo' + photo_path[0] + '.png').get_image()
+            face_swap = FaceSwapper(user_photo_path, 'photo/' + photo_path[0] + '.png').get_image()
             sticker = await bot.add_sticker_to_set(
                 user_id=user.id,
                 name=sticker_pack_name,
