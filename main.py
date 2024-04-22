@@ -2,13 +2,16 @@
 import io
 import logging
 import os
+import pathlib
+import random
 
 import aiohttp
 import requests
 from PIL import Image
 
+from FaceSwap import FaceSwapper
 from data import db_session
-from telegram import Update, ReplyKeyboardRemove
+from telegram import Update, ReplyKeyboardRemove, InputFile, InputMediaPhoto, InputMedia, InputSticker
 from telegram.ext import Application, MessageHandler, filters, CommandHandler, ConversationHandler, CallbackContext
 from config import BOT_TOKEN, ADMIN_ID
 from telegram import ReplyKeyboardMarkup
@@ -19,15 +22,17 @@ from data.models.user import User
 
 # Запускаем логгирование
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.WARNING
 )
 
 logger = logging.getLogger(__name__)
 
 
 async def start(update: Update, context: CallbackContext):
+    reply_keyboard = [['/help']]
+    markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
     await update.message.reply_text(f'Здравствуйте, я умею создавать стикерпаки по шаблонам, чтобы узнать подробнее о '
-                                    f'моих возможностях напишите команду /help', reply_markup=ReplyKeyboardRemove())
+                                    f'моих возможностях напишите команду /help', reply_markup=markup)
     user_id = update.message.from_user.id
     db_sess = db_session.create_session()
     if not db_sess.query(User).filter(User.id_telegramm == user_id).first():
@@ -62,11 +67,11 @@ async def change(update, context):
         templates = db_sess.query(Template).filter(Template.is_public == True).all()
         reply_keybord = [list(map(lambda x: x.title, templates[i:i + 3])) for i in range(0, len(templates), 3)]
         markup2 = ReplyKeyboardMarkup(reply_keybord, one_time_keyboard=True)
-        await update.message.reply_text(f'Выбирите шаблон из списка', reply_markup=markup2)
+        await update.message.reply_text(f'Выберите шаблон из списка', reply_markup=markup2)
         return 'общий'
     reply_keyboard = [['общий', 'приватный']]
     markup1 = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=False)
-    await update.message.reply_text(f'Выбирите список шаблонов', reply_markup=markup1)
+    await update.message.reply_text(f'Выберите список шаблонов', reply_markup=markup1)
     return 'выбор'
 
 
@@ -77,7 +82,7 @@ async def check_type_templates(update: Update, context):
         templates = db_sess.query(Template).filter(Template.is_public == True).all()
         reply_keybord = [list(map(lambda x: x.title, templates[i:i + 3])) for i in range(0, len(templates), 3)]
         markup2 = ReplyKeyboardMarkup(reply_keybord, one_time_keyboard=True)
-        await update.message.reply_text(f'Выбирите шаблон из списка', reply_markup=markup2)
+        await update.message.reply_text(f'Выберите шаблон из списка', reply_markup=markup2)
         return 'общий'
     elif text == 'приватный':
         db_sess = db_session.create_session()
@@ -85,10 +90,10 @@ async def check_type_templates(update: Update, context):
         templates = db_sess.query(Template).filter(Template.id_creator == user.id).all()
         reply_keybord = [list(map(lambda x: x.title, templates[i:i + 3])) for i in range(0, len(templates), 3)]
         markup3 = ReplyKeyboardMarkup(reply_keybord, one_time_keyboard=True)
-        await update.message.reply_text(f'Выбирите шаблон из списка', reply_markup=markup3)
+        await update.message.reply_text(f'Выберите шаблон из списка', reply_markup=markup3)
         return 'приватный'
     else:
-        await update.message.reply_text(f'Извините, но я не понял какой из списков вам выдать, выбирете 1 из списка: '
+        await update.message.reply_text(f'Извините, но я не понял какой из списков вам выдать, выберите 1 из списка: '
                                         f'общий или приватный')
         return 'выбор'
 
@@ -103,7 +108,7 @@ async def general(update: Update, context):
     db_sess = db_session.create_session()
     template = db_sess.query(Template).filter(Template.title == text, Template.is_public == True).first()
     if not template:
-        await update.message.reply_text(f'Вы выброли не существующий/недоступный шаблон, пожалуйста, выберите '
+        await update.message.reply_text(f'Вы выбрали несуществующий/недоступный шаблон, пожалуйста, выберите '
                                         f'правильный шаблон из списка')
         return 'общий'
     user = db_sess.query(User).filter(User.id_telegramm == update.message.from_user.id).first()
@@ -121,13 +126,15 @@ async def privat(update: Update, context):
     user = db_sess.query(User).filter(User.id_telegramm == update.message.from_user.id).first()
     template = db_sess.query(Template).filter(Template.title == text, Template.id_creator == user.id).first()
     if not template:
-        await update.message.reply_text(f'Вы выброли не существующий/недоступный шаблон, пожалуйста, выберите '
+        await update.message.reply_text(f'Вы выбрали не существующий/недоступный шаблон, пожалуйста, выберите '
                                         f'правильный шаблон из списка')
         return 'приватный'
     user.selected_template = template.id
     db_sess.commit()
     await update.message.reply_text(
         f'Ваш выбранный шаблон изменён, теперь это {template.title}, можете попробовать сгенерировать стикерпак')
+    await update.message.reply_text(
+        'Для генерации стикеров отправьте ваше фото. На нем отчетливо должно быть видно ваше лицо.')
     return ConversationHandler.END
 
 
@@ -148,7 +155,14 @@ async def check_template_name(update: Update, context):
     template.id_creator = user.id
     db_sess.add(template)
     db_sess.commit()
-    await update.message.reply_text(f'Шаблон создан, не забудьте добавить в него фотографии')
+    user.selected_template = template.id
+    db_sess.add(user)
+    db_sess.commit()
+
+    reply_markup = [['/add_photo']]
+    markup = ReplyKeyboardMarkup(reply_markup, one_time_keyboard=True)
+
+    await update.message.reply_text(f'Шаблон создан, не забудьте добавить в него фотографии', reply_markup=markup)
     return ConversationHandler.END
 
 
@@ -169,9 +183,10 @@ async def save_image(update, context):
             await get_photo(update, img.id)
             await update.message.reply_text(f'Ваше фото успешно загружено')
         else:
-            await update.message.reply_text(f'у вас нет доступа редактировать данный шаблон')
+            await update.message.reply_text(f'У вас нет доступа редактировать данный шаблон')
+            await stop_add_photo(update, context, send_message=False)
     else:
-        await update.message.reply_text(f'В данный момент создание стикерпаков отключено')
+        await create_stickers_set(update, context)
 
 
 async def get_photo(update, file_name):
@@ -200,17 +215,24 @@ async def add_photo(updade: Update, context: CallbackContext):
     user.is_add_photo = True
     db_sess.commit()
     template = db_sess.query(Template).filter(Template.id == user.selected_template).first().title
+
+    reply_keyboard = [['/stop_add_photo']]
+    markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=False)
+
     await updade.message.reply_text(f'Теперь каждое отправленное вами фото будет попадать в шаблон {template}\n'
-                                    f'Чтобы выйти из режима добавления фото в шаблон напишите команду /stop_add_photo')
+                                    f'Чтобы выйти из режима добавления фото в шаблон напишите команду /stop_add_photo',
+                                    reply_markup=markup)
 
 
-async def stop_add_photo(updade: Update, context: CallbackContext):
+async def stop_add_photo(updade: Update, context: CallbackContext, send_message=True):
     db_sess = db_session.create_session()
     user = db_sess.query(User).filter(User.id_telegramm == updade.message.from_user.id).first()
     user.is_add_photo = False
     db_sess.commit()
-    await updade.message.reply_text(f'Вы выключили режим добавления фото в шаблон, теперь все далее отправленные фото '
-                                    f'будут преобразованы в стикерпаки')
+    if send_message:
+        await updade.message.reply_text(
+            f'Вы выключили режим добавления фото в шаблон, теперь все далее отправленные фото '
+            f'будут преобразованы в стикерпаки', reply_markup=ReplyKeyboardRemove())
 
 
 async def support(update: Update, context: CallbackContext):
@@ -242,6 +264,112 @@ async def support(update: Update, context: CallbackContext):
     await context.bot.send_message(chat_id=update.effective_chat.id,
                                    text="Режим поддержки включен. Следующее ваше сообщение отправиться администратору")
     return 1
+
+
+async def download_photo(file_id, path):
+    # Функция для скачивания фотографии по file_id
+    async with aiohttp.ClientSession() as session:
+        # Получаем путь к файлу фотографии
+        async with session.get(f'https://api.telegram.org/bot{BOT_TOKEN}/getFile?file_id={file_id}') as response:
+            response_data = await response.json()
+            file_path = response_data['result']['file_path']
+
+        # Скачиваем фотографию
+        photo_url = f'https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}'
+        async with session.get(photo_url) as photo_response:
+            if photo_response.status == 200:
+                # Сохраняем фотографию локально
+                photo_data = await photo_response.read()
+                with open(path, 'wb') as photo_file:
+                    photo_file.write(photo_data)
+                return path
+            else:
+                raise Exception('Не удалось скачать фотографию.')
+
+
+def optimize_image(image_path, max_size=(512, 512), quality=85):
+    """
+    Уменьшает размер изображения и сохраняет его с определенным качеством.
+    """
+    with Image.open(image_path) as img:
+        img.thumbnail(max_size, Image.Resampling.LANCZOS)
+        img.save(image_path, format='PNG', optimize=True, quality=quality)
+
+
+async def create_stickers_set(update, context):
+    bot = context.bot
+    user = update.message.from_user
+    db_sess = db_session.create_session()
+    user = db_sess.query(User).filter(User.id_telegramm == update.message.from_user.id).first()
+    photos_paths = db_sess.query(Photo.id).join(Template, Template.id == Photo.id_template).filter(
+        Template.id == user.selected_template).all()
+
+    user = update.message.from_user
+    sticker_pack_name = f"{user.username + str(random.randint(1, 10 ** 20))}_by_{bot.username}"
+    sticker_pack_title = f"{user.username}'s Sticker Pack"
+
+    file_id = update.message.photo[-1].file_id
+    user_photo_path = f'user_images/{user.username}_{file_id}.png'
+    user_photo_path = await download_photo(file_id, user_photo_path)
+
+    if not os.path.exists(user_photo_path):
+        await update.message.reply_text('Не удалось скачать вашу фотографию.')
+        return
+    first_photo_path = 'photo/' + str(photos_paths[0][0]) + '.png' if photos_paths else None
+
+    if not first_photo_path:
+        await update.message.reply_text('Нет фотографий для создания стикерпака.')
+        return
+
+    i = 0
+    try:
+        # Create face swapped image and save it
+        face_swapper = FaceSwapper(first_photo_path, user_photo_path)
+        face_swapper.save_image(f'user_images/{user.id}_{i}.png')
+
+        optimize_image(f'user_images/{user.id}_{i}.png')
+        with open(f'user_images/{user.id}_{i}.png', 'rb') as sticker_file:
+            # media = InputMedia('photo', f'user_images/{user.id}_{i}.png')
+            await bot.create_new_sticker_set(
+                user_id=user.id,
+                name=sticker_pack_name,
+                title=sticker_pack_title,
+                stickers=[InputSticker(sticker_file, ['🍅'], 'static')],
+
+            )
+            await update.message.reply_text('Стикерпак успешно создан!')
+            # await bot.send_sticker(chat_id=update.message.chat_id, sticker=file_id)
+
+            i += 1
+            for photo_id in photos_paths[1:]:
+                photo_path = f'photo/{photo_id[0]}.png'
+                face_swapper = FaceSwapper(photo_path, user_photo_path)
+                face_swapper.save_image(f'user_images/{user.id}_{i}.png')
+                optimize_image(f'user_images/{user.id}_{i}.png')
+
+                with open(f'user_images/{user.id}_{i}.png', 'rb') as sticker_file:
+                    await bot.add_sticker_to_set(
+                        user_id=user.id,
+                        name=sticker_pack_name,
+                        sticker=InputSticker(sticker_file, ['🍅'], 'static')
+                    )
+
+                i += 1
+            await update.message.reply_text('Все стикеры добавлены в стикерпак!')
+
+            sticker_set = await bot.get_sticker_set(sticker_pack_name)
+            stickers = sticker_set.stickers
+            for sticker in stickers:
+                sticker_id = sticker.file_id
+                break
+
+            await bot.send_sticker(chat_id=update.message.chat_id, sticker=sticker_id)
+
+    except Exception as e:
+        logger.error(e)
+        await update.message.reply_text('Произошла ошибка при создании стикерпака.')
+    finally:
+        os.remove(user_photo_path)
 
 
 def main():

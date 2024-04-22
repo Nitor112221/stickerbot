@@ -1,2 +1,8 @@
-config.py
 .idea/
+.ipynb_checkpoints/
+old/
+__pycache__/
+models/
+utils/__pycache__/
+dlib.ipynb
+user_images/video.MOV

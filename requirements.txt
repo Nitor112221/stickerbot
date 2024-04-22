@@ -1,3 +1,9 @@
+
+numpy 
+cmake
+opencv-python
+dlib
+
 python-telegram-bot[ext]
 SQLAlchemy
 dlib
