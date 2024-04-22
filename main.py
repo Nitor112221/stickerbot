@@ -2,6 +2,8 @@
 import io
 import logging
 import os
+import pathlib
+import random
 
 import aiohttp
 import requests
@@ -9,7 +11,7 @@ from PIL import Image
 
 from FaceSwap import FaceSwapper
 from data import db_session
-from telegram import Update, ReplyKeyboardRemove, InputFile
+from telegram import Update, ReplyKeyboardRemove, InputFile, InputMediaPhoto, InputMedia, InputSticker
 from telegram.ext import Application, MessageHandler, filters, CommandHandler, ConversationHandler, CallbackContext
 from config import BOT_TOKEN, ADMIN_ID
 from telegram import ReplyKeyboardMarkup
@@ -285,6 +287,15 @@ async def download_photo(file_id, path):
                 raise Exception('Не удалось скачать фотографию.')
 
 
+def optimize_image(image_path, max_size=(512, 512), quality=85):
+    """
+    Уменьшает размер изображения и сохраняет его с определенным качеством.
+    """
+    with Image.open(image_path) as img:
+        img.thumbnail(max_size, Image.Resampling.LANCZOS)
+        img.save(image_path, format='PNG', optimize=True, quality=quality)
+
+
 async def create_stickers_set(update, context):
     bot = context.bot
     user = update.message.from_user
@@ -294,12 +305,11 @@ async def create_stickers_set(update, context):
         Template.id == user.selected_template).all()
 
     user = update.message.from_user
-    sticker_pack_name = f"{user.username}_by_{bot.username}_pack"
+    sticker_pack_name = f"{user.username + str(random.randint(1, 10 ** 20))}_by_{bot.username}"
     sticker_pack_title = f"{user.username}'s Sticker Pack"
 
     file_id = update.message.photo[-1].file_id
     user_photo_path = f'user_images/{user.username}_{file_id}.png'
-
     user_photo_path = await download_photo(file_id, user_photo_path)
 
     if not os.path.exists(user_photo_path):
@@ -313,42 +323,53 @@ async def create_stickers_set(update, context):
 
     i = 0
     try:
-        face_swap = FaceSwapper(user_photo_path, first_photo_path).save_image(f'user_images/{user.id}_{i}.png')
-        await bot.create_new_sticker_set(
-            user_id=user.id,
-            name=sticker_pack_name,
-            title=sticker_pack_title,
-            stickers=InputFile(f'user_images/{user.id}_{i}.png')
-            # emoji='😀'
-        )
-        await update.message.reply_text('Стикерпак успешно создан!')
-        i += 1
-        os.remove(f'user_images/{user.id}_{i}.png')
+        # Create face swapped image and save it
+        face_swapper = FaceSwapper(first_photo_path, user_photo_path)
+        face_swapper.save_image(f'user_images/{user.id}_{i}.png')
 
-        # Добавляем оставшиеся стикеры в стикерпак
-        for photo_path in photos_paths[1:]:
-            face_swap = FaceSwapper(user_photo_path, 'photo/' + photo_path[0] + '.png').save_image(
-                f'user_images/{user.id}_{i}.png')
-            sticker = await bot.add_sticker_to_set(
+        optimize_image(f'user_images/{user.id}_{i}.png')
+        with open(f'user_images/{user.id}_{i}.png', 'rb') as sticker_file:
+            # media = InputMedia('photo', f'user_images/{user.id}_{i}.png')
+            await bot.create_new_sticker_set(
                 user_id=user.id,
                 name=sticker_pack_name,
-                sticker=InputFile(f'user_images/{user.id}_{i}.png'),
+                title=sticker_pack_title,
+                stickers=[InputSticker(sticker_file, ['🍅'], 'static')],
+
             )
-            # Закрываем файл стикера после использования
-            sticker.png_sticker.close()
-            os.remove(f'user_images/{user.id}_{i}.png')
+            await update.message.reply_text('Стикерпак успешно создан!')
+            # await bot.send_sticker(chat_id=update.message.chat_id, sticker=file_id)
+
             i += 1
+            for photo_id in photos_paths[1:]:
+                photo_path = f'photo/{photo_id[0]}.png'
+                face_swapper = FaceSwapper(photo_path, user_photo_path)
+                face_swapper.save_image(f'user_images/{user.id}_{i}.png')
+                optimize_image(f'user_images/{user.id}_{i}.png')
 
-        # Отправляем сообщение о том, что все стикеры добавлены
-        await update.message.reply_text('Все стикеры добавлены в стикерпак!')
+                with open(f'user_images/{user.id}_{i}.png', 'rb') as sticker_file:
+                    await bot.add_sticker_to_set(
+                        user_id=user.id,
+                        name=sticker_pack_name,
+                        sticker=InputSticker(sticker_file, ['🍅'], 'static')
+                    )
 
-        # Отправляем один из стикеров из стикерпака пользователю
-        # Здесь мы используем последний добавленный стикер
-        await bot.send_sticker(chat_id=update.message.chat_id, sticker=sticker.file_id)
-        os.remove(user_photo_path)
+                i += 1
+            await update.message.reply_text('Все стикеры добавлены в стикерпак!')
+
+            sticker_set = await bot.get_sticker_set(sticker_pack_name)
+            stickers = sticker_set.stickers
+            for sticker in stickers:
+                sticker_id = sticker.file_id
+                break
+
+            await bot.send_sticker(chat_id=update.message.chat_id, sticker=sticker_id)
+
     except Exception as e:
         logger.error(e)
         await update.message.reply_text('Произошла ошибка при создании стикерпака.')
+    finally:
+        os.remove(user_photo_path)
 
 
 def main():
