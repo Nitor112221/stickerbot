@@ -5,4 +5,4 @@ __pycache__/
 models/
 utils/__pycache__/
 dlib.ipynb
-example_images/video.MOV
+user_images/video.MOV

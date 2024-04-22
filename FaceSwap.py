@@ -100,4 +100,4 @@ class FaceSwapper():
         final_image = self.get_image()
         cv2.imwrite(file_path, final_image)
 
-# swap = FaceSwapper('example_images/putin.png', 'example_images/mask.jpg').save_image('example_images/res.png')
+# swap = FaceSwapper('user_images/putin.png', 'user_images/mask.jpg').save_image('user_images/res.png')
